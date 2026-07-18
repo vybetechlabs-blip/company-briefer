@@ -1,0 +1,114 @@
+{
+  "domain": "http://127.0.0.1:8043",
+  "evidence": {
+    "domain": "http://127.0.0.1:8043",
+    "pages": [
+      {
+        "url": "http://127.0.0.1:8043/",
+        "status": 200,
+        "title": "Acme Signals — Revenue intelligence for B2B teams",
+        "meta_description": "Acme Signals turns your CRM noise into pipeline you can trust. Built for B2B revenue teams.",
+        "headings": [
+          "Pipeline you can trust",
+          "Built for B2B revenue teams",
+          "Forecasting without the folklore"
+        ],
+        "nav_labels": [
+          "Home",
+          "About",
+          "Pricing",
+          "Platform",
+          "Start free trial"
+        ],
+        "main_text": "Pipeline you can trust Acme Signals plugs into your CRM and surfaces the deals your team is actually going to win. No more spreadsheet forecasting rituals. Start free trial Built for B2B revenue teams Sales leaders at fast-growing SaaS companies use Acme Signals to run Monday forecast calls straight from live data. Trusted by over 400 revenue teams. Forecasting without the folklore Deal-level win probability, updated nightly, explained in plain English.",
+        "fetched_at": "2026-07-18T13:42:38.392040Z"
+      },
+      {
+        "url": "http://127.0.0.1:8043/about",
+        "status": 200,
+        "title": "About — Acme Signals",
+        "meta_description": "Why we built Acme Signals.",
+        "headings": [
+          "We got tired of forecast theater",
+          "What we believe"
+        ],
+        "nav_labels": [
+          "Home",
+          "About",
+          "Pricing",
+          "Book a demo"
+        ],
+        "main_text": "We got tired of forecast theater Acme Signals started inside a 200-rep sales org where the forecast was decided by whoever spoke loudest. We built the tool we wished we had: deal scoring grounded in what buyers actually do, not what reps promise. What we believe Revenue data should explain itself. Every score ships with the reasons behind it. Book a demo",
+        "fetched_at": "2026-07-18T13:42:39.378566Z"
+      },
+      {
+        "url": "http://127.0.0.1:8043/pricing",
+        "status": 200,
+        "title": "Pricing — Acme Signals",
+        "meta_description": "Simple plans for teams of every size.",
+        "headings": [
+          "Simple, seat-based pricing",
+          "Starter",
+          "Scale"
+        ],
+        "nav_labels": [
+          "Home",
+          "Pricing",
+          "Talk to sales"
+        ],
+        "main_text": "Simple, seat-based pricing Starter $49 per seat per month. Up to 10 seats. Founded in 2019, we have kept pricing flat for 3 years. Scale $99 per seat per month. Unlimited seats, SSO, priority support. Questions about volume discounts? Email [redacted] or call [redacted] and our team will help you size a plan. Talk to sales",
+        "fetched_at": "2026-07-18T13:42:42.393997Z"
+      }
+    ],
+    "robots_notes": [
+      "skipped /solutions: disallowed by robots.txt",
+      "skipped /platform: disallowed by robots.txt",
+      "skipped http://127.0.0.1:8043/product: HTTP 404",
+      "skipped http://127.0.0.1:8043/products: HTTP 404",
+      "skipped http://127.0.0.1:8043/customers: HTTP 404"
+    ]
+  },
+  "brief": {
+    "positioning": "Acme Signals positions itself as a revenue intelligence platform for B2B teams that plugs into a company's CRM to surface winnable deals and produce trustworthy, data-driven forecasts. It frames itself against 'forecast theater' and spreadsheet rituals, emphasizing deal-level win probability that is updated nightly and explained in plain English.",
+    "icp_guess": [
+      "Sales leaders at fast-growing B2B SaaS companies (explicitly named)",
+      "Revenue/RevOps teams that run recurring forecast calls off CRM data",
+      "Mid-market sales orgs (Starter caps at 10 seats; Scale offers unlimited seats and SSO, suggesting larger teams too)"
+    ],
+    "value_props": [
+      "Turns CRM 'noise' into a pipeline forecast you can trust",
+      "Deal-level win probability updated nightly",
+      "Explainable scores — every score ships with the reasons behind it, in plain English",
+      "Scoring grounded in buyer behavior rather than rep promises",
+      "Simple, flat seat-based pricing (kept flat for 3 years)"
+    ],
+    "hooks": [
+      "Reference their 'forecasting without the folklore' angle — offer a conversation about replacing spreadsheet forecast rituals with live-data calls",
+      "Tie into their origin story of coming from a 200-rep sales org tired of 'forecast theater'",
+      "Their claim of 'trusted by over 400 revenue teams' is a credibility signal worth exploring for scale/expansion",
+      "Explainability emphasis (scores ship with reasons) is a differentiator to build outreach around",
+      "Scale plan features (SSO, priority support, unlimited seats) signal a move upmarket — relevant if selling to their enterprise motion"
+    ],
+    "signals_observed": [
+      "Homepage tagline: 'Pipeline you can trust' and 'Forecasting without the folklore'",
+      "Claim: 'Trusted by over 400 revenue teams'",
+      "Nightly-updated deal-level win probability, explained in plain English",
+      "Founded in 2019; pricing kept flat for 3 years",
+      "Two plans: Starter $49/seat/mo (up to 10 seats), Scale $99/seat/mo (unlimited seats, SSO, priority support)",
+      "Origin story: built inside a 200-rep sales org",
+      "CTAs vary by page: 'Start free trial', 'Book a demo', 'Talk to sales'",
+      "Several pages inaccessible (/solutions and /platform disallowed by robots.txt; /product, /products, /customers returned 404)"
+    ],
+    "sources": [
+      "http://127.0.0.1:8043/",
+      "http://127.0.0.1:8043/about",
+      "http://127.0.0.1:8043/pricing"
+    ],
+    "confidence": {
+      "level": "medium",
+      "rationale": "Clear positioning and pricing from three pages, but Platform/Solutions/Customers pages were inaccessible, limiting product-depth and proof detail."
+    },
+    "notes": "Product/platform detail and customer proof pages could not be fetched (robots.txt disallow and 404s), so feature specifics and named customers are unknown. The '400 revenue teams' figure is a marketing claim, unverified."
+  },
+  "synthesis_status": "ok"
+}
