@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: |
+          ruff check company_briefer tests
+          ruff format --check company_briefer tests
+
+      - name: Type-check (mypy)
+        run: mypy company_briefer
+
+      - name: Test (pytest + coverage, no network)
+        run: pytest --cov=company_briefer --cov-report=term-missing --cov-fail-under=90
+
+      - name: Smoke the CLI (no key, evidence-only path)
+        run: company-briefer --help
