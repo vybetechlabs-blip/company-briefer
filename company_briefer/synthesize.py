@@ -1,0 +1,106 @@
+"""Optional LLM synthesis: Evidence in, schema-validated Brief out.
+
+One Anthropic API call, made only when the caller opts in with --llm and
+ANTHROPIC_API_KEY is set in the environment. The prompt hard-scopes the model
+to the supplied evidence; output is parsed defensively (code fences, stray
+prose, malformed JSON) and validated through Pydantic before anything is
+returned. On any failure the caller still gets the evidence bundle.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+
+import anthropic
+from pydantic import ValidationError
+
+from company_briefer.config import Config
+from company_briefer.models import Brief, Evidence, SynthesisStatus
+
+_SYSTEM_PROMPT = """\
+You are a pre-call research analyst. You will receive evidence extracted from a
+company's public marketing pages. Produce a research brief as a single JSON
+object and nothing else.
+
+Rules:
+- Synthesize ONLY from the supplied evidence. Never invent products, customers,
+  metrics, names, or facts that are not present in it.
+- If the evidence is thin, say so: keep lists short, set confidence to "low",
+  and explain the gap in the rationale.
+- Mark low-confidence inferences as such ("likely", "appears to") instead of
+  stating them as fact.
+- "sources" must contain only URLs that appear in the evidence.
+- "hooks" are outreach angles; each must be grounded in a specific observed
+  signal, never in outside knowledge.
+- Output raw JSON only: no markdown fences, no commentary before or after.
+
+JSON shape:
+{
+  "positioning": "one-paragraph summary of how the company positions itself",
+  "icp_guess": ["likely ideal customer profiles, grounded in observed signals"],
+  "value_props": ["value propositions as stated or clearly implied on the pages"],
+  "hooks": ["outreach angles tied to specific observed signals"],
+  "signals_observed": ["concrete things seen on the pages"],
+  "sources": ["URLs from the evidence that informed this brief"],
+  "confidence": {"level": "low|medium|high", "rationale": "one line"},
+  "notes": "optional caveats, or null"
+}
+"""
+
+
+def api_key_present() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def build_user_prompt(evidence: Evidence) -> str:
+    return (
+        f"Evidence for {evidence.domain} (JSON; one object per fetched page):\n"
+        f"{evidence.model_dump_json(indent=2)}\n\n"
+        "Produce the brief JSON now."
+    )
+
+
+def _extract_json(text: str) -> str:
+    """Best-effort recovery of a JSON object from model output."""
+    stripped = text.strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
+    if fenced:
+        stripped = fenced.group(1).strip()
+    if not stripped.startswith("{"):
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start != -1 and end > start:
+            stripped = stripped[start : end + 1]
+    return stripped
+
+
+def parse_brief(text: str) -> Brief | None:
+    """Parse model output into a Brief; None if it cannot be validated."""
+    try:
+        data = json.loads(_extract_json(text))
+        return Brief.model_validate(data)
+    except (json.JSONDecodeError, ValidationError):
+        return None
+
+
+def synthesize(evidence: Evidence, config: Config) -> tuple[Brief | None, SynthesisStatus]:
+    """Run the single synthesis call. Never raises on model output problems."""
+    if not api_key_present():
+        return None, "skipped_no_api_key"
+    client = anthropic.Anthropic()
+    try:
+        response = client.messages.create(
+            model=config.model,
+            max_tokens=config.max_tokens,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": build_user_prompt(evidence)}],
+        )
+    except anthropic.APIError:
+        return None, "failed"
+    text = "".join(block.text for block in response.content if block.type == "text")
+    brief = parse_brief(text)
+    if brief is None:
+        return None, "failed"
+    return brief, "ok"
