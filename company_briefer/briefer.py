@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import requests
 
+from company_briefer.cache import PageCache
 from company_briefer.config import Config
 from company_briefer.crawler import RobotsPolicy, normalize_origin, plan_fetch
 from company_briefer.extractor import extract_page
@@ -29,7 +30,8 @@ def build_brief(
     """
     config = config or Config()
     origin = normalize_origin(domain)
-    fetcher = Fetcher(config, use_cache=use_cache)
+    fetcher = Fetcher(config)
+    cache = PageCache(config.cache_dir, config.max_page_chars) if use_cache else None
 
     robots_txt = fetcher.fetch_robots(origin)  # raises RobotsUnavailableError: fail-closed
     policy = RobotsPolicy(robots_txt, config.user_agent)
@@ -42,6 +44,10 @@ def build_brief(
 
     pages: list[PageContent] = []
     for url in urls:
+        cached = cache.read(url) if cache else None
+        if cached is not None:
+            pages.append(cached)
+            continue
         try:
             fetched = fetcher.fetch_page(url)
         except requests.RequestException as exc:
@@ -55,14 +61,18 @@ def build_brief(
         if fetched.status != 200:
             notes.append(f"skipped {url}: HTTP {fetched.status}")
             continue
-        page = extract_page(
-            fetched.url,
-            fetched.status,
-            fetched.html,
-            fetched.fetched_at,
-            max_text_chars=config.max_page_chars,
+        page = scrub_page(
+            extract_page(
+                fetched.url,
+                fetched.status,
+                fetched.html,
+                fetched.fetched_at,
+                max_text_chars=config.max_page_chars,
+            )
         )
-        pages.append(scrub_page(page))
+        if cache:
+            cache.write(page)  # the scrubbed page only, never the HTML as fetched
+        pages.append(page)
 
     evidence = Evidence(domain=origin, pages=pages, robots_notes=notes)
 

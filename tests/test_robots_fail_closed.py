@@ -53,7 +53,7 @@ def test_fetcher_raises_when_robots_cannot_be_read(
 ) -> None:
     break_robots(monkeypatch, case)
     with pytest.raises(RobotsUnavailableError, match=CASES[case]):
-        Fetcher(config, use_cache=False).fetch_robots("https://example.com")
+        Fetcher(config).fetch_robots("https://example.com")
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -90,7 +90,7 @@ def test_missing_robots_is_not_a_refusal(
     monkeypatch: pytest.MonkeyPatch, config: Config, status: int
 ) -> None:
     monkeypatch.setattr(requests.Session, "get", lambda self, url, **kw: FakeResponse(status, "x"))
-    assert Fetcher(config, use_cache=False).fetch_robots("https://example.com") is None
+    assert Fetcher(config).fetch_robots("https://example.com") is None
 
 
 def test_unusable_redirect_status_for_robots_is_a_refusal(
@@ -99,7 +99,7 @@ def test_unusable_redirect_status_for_robots_is_a_refusal(
     """A 3xx with no Location is neither a robots.txt nor a clean absence."""
     monkeypatch.setattr(requests.Session, "get", lambda self, url, **kw: FakeResponse(302, ""))
     with pytest.raises(RobotsUnavailableError, match="HTTP 302"):
-        Fetcher(config, use_cache=False).fetch_robots("https://example.com")
+        Fetcher(config).fetch_robots("https://example.com")
 
 
 def test_robots_redirect_to_another_origin_is_a_refusal(

@@ -1,22 +1,19 @@
-"""HTTP layer: robots.txt retrieval, polite page fetching, and on-disk caching.
+"""HTTP layer: robots.txt retrieval and polite page fetching.
 
 All network IO lives behind this module so tests can mock a single seam
 (`requests.Session.get`). Politeness is enforced here: descriptive User-Agent,
 per-request timeout, a rate-limit delay between requests, and one bounded
 retry with backoff. Redirects are followed one hop at a time and only within
 the origin that was asked for (scheme, host and port); a redirect to any other
-origin is never requested.
+origin is never requested. Caching lives in `cache.py` and stores scrubbed pages.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -38,7 +35,6 @@ class FetchedPage:
     status: int
     html: str
     fetched_at: datetime
-    from_cache: bool = False
     # Set when the server redirected to another origin; that target was not requested.
     redirect_to: str | None = None
 
@@ -72,9 +68,8 @@ def describe_target(url: str) -> str:
 class Fetcher:
     """Polite HTTP client for a single briefing run."""
 
-    def __init__(self, config: Config, *, use_cache: bool = True) -> None:
+    def __init__(self, config: Config) -> None:
         self.config = config
-        self.use_cache = use_cache
         self.session = requests.Session()
         self.session.headers["User-Agent"] = config.user_agent
         self._last_request_at = 0.0
@@ -104,15 +99,11 @@ class Fetcher:
         raise RobotsUnavailableError(f"{url} returned HTTP {resp.status_code}")
 
     def fetch_page(self, url: str) -> FetchedPage:
-        """Fetch one page, serving from the on-disk cache when possible.
+        """Fetch one page.
 
         A redirect within the origin is followed. A redirect to another origin is
         not requested: the result carries its status and `redirect_to` instead.
         """
-        if self.use_cache:
-            cached = self._cache_read(url)
-            if cached is not None:
-                return cached
         resp, blocked = self._follow(url, self._get_with_retry)
         if blocked is not None:
             return FetchedPage(
@@ -126,12 +117,9 @@ class Fetcher:
         # garbles UTF-8 pages; fall back to detection when no charset is declared.
         if "charset" not in resp.headers.get("Content-Type", "").lower():
             resp.encoding = resp.apparent_encoding
-        page = FetchedPage(
+        return FetchedPage(
             url=url, status=resp.status_code, html=resp.text, fetched_at=datetime.now(UTC)
         )
-        if self.use_cache and page.status == 200:
-            self._cache_write(page)
-        return page
 
     def _get(self, url: str) -> requests.Response:
         """One request, never following a redirect: `_follow` decides where to go."""
@@ -184,34 +172,3 @@ class Fetcher:
         if wait > 0:
             time.sleep(wait)
         self._last_request_at = time.monotonic()
-
-    def _cache_path(self, url: str) -> Path:
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
-        return self.config.cache_dir / f"{digest}.json"
-
-    def _cache_read(self, url: str) -> FetchedPage | None:
-        path = self._cache_path(url)
-        if not path.is_file():
-            return None
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            return FetchedPage(
-                url=str(raw["url"]),
-                status=int(raw["status"]),
-                html=str(raw["html"]),
-                fetched_at=datetime.fromisoformat(raw["fetched_at"]),
-                from_cache=True,
-            )
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            return None
-
-    def _cache_write(self, page: FetchedPage) -> None:
-        path = self._cache_path(page.url)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "url": page.url,
-            "status": page.status,
-            "html": page.html,
-            "fetched_at": page.fetched_at.isoformat(),
-        }
-        path.write_text(json.dumps(payload), encoding="utf-8")

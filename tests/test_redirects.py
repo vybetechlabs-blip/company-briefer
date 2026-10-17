@@ -150,7 +150,7 @@ def test_same_origin_redirect_loop_gives_up(scripted_hosts: Install, config: Con
     scripted_hosts({"a.example": site_a(redirect_to("/about"))})
 
     with pytest.raises(requests.TooManyRedirects):
-        Fetcher(config, use_cache=False).fetch_page("https://a.example/about")
+        Fetcher(config).fetch_page("https://a.example/about")
 
     result = build_brief("a.example", config, use_cache=False)
     assert any(
@@ -159,16 +159,14 @@ def test_same_origin_redirect_loop_gives_up(scripted_hosts: Install, config: Con
     )
 
 
-def test_cached_pages_are_unaffected_by_redirect_handling(
-    scripted_hosts: Install, config: Config
-) -> None:
+def test_a_blocked_redirect_is_never_cached(scripted_hosts: Install, config: Config) -> None:
     net = scripted_hosts({"a.example": site_a(redirect_to("https://b.example/x"))})
-    fetcher = Fetcher(config, use_cache=True)
 
-    first = fetcher.fetch_page("https://a.example/")
-    second = fetcher.fetch_page("https://a.example/")
+    build_brief("a.example", config)
+    first_run = len(net.log)
+    build_brief("a.example", config)
 
-    assert first.status == 200 and not first.from_cache
-    assert second.from_cache
-    assert urlsplit(net.log[0]).path == "/"
-    assert len(net.log) == 1
+    about_requests = [u for u in net.log if urlsplit(u).path == "/about"]
+    assert len(about_requests) == 2  # asked again on the second run, so not served from cache
+    assert len(net.log) > first_run
+    assert "b.example" not in net.hosts_contacted()
