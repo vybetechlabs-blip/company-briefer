@@ -5,24 +5,24 @@
 Give it a domain and get a pre-call research brief built only from that company's public marketing pages: positioning, likely customers, value propositions and outreach angles.
 
 ## Problem and result
-Preparing for a sales call usually means skimming a website by hand or running a scraper that collects far more than it should. company-briefer does the narrow version. It reads at most 8 fixed marketing paths on one origin, with a hard ceiling of 16, one second apart. It removes email addresses and phone numbers before it builds the evidence, and it stops if robots.txt cannot be read or a page redirects to another origin.
+Preparing for a sales call usually means skimming a website by hand or running a scraper that collects far more than it should. company-briefer does the narrow version. It reads at most 8 fixed marketing paths on one origin, with a hard ceiling of 16, one second apart. It removes email addresses and phone numbers before it builds the evidence or writes anything to disk. It stops if robots.txt cannot be read, and it never follows a redirect that leaves the origin or leads into a path robots.txt disallows.
 
-The result is an evidence bundle that needs no API key, plus an optional brief from one model call. The brief is validated against a schema, and every source it cites must be a page that was fetched. The committed example, `examples/sample_brief.json`, cites 3 fetched pages and holds 2 redacted contact strings. The suite has 93 tests, makes no network requests and covers 98.9% of the code against a 90% gate.
+The result is an evidence bundle that needs no API key, plus an optional brief from one model call. The brief is validated against a schema, and every source it cites must be a page that was fetched. The committed example, `examples/sample_brief.json`, cites 3 fetched pages and holds 2 redacted contact strings. The suite has 115 tests, makes no network requests and covers 98.9% of the code against a 90% gate.
 
 ### How it works
 A run goes through these stages in order, and several of them can stop it.
 
 ```
 domain ──> robots.txt (unreadable: stop, exit code 3)
-       ──> bounded fetch (at most 8 allowlisted paths, one second apart, cached)
-             a redirect to another origin: skip that path and note the target
+       ──> bounded fetch (at most 8 allowlisted paths, one second apart)
+             a redirect to another origin or into a disallowed path: skip that path, note the target
        ──> extract (title, meta description, h1 to h3, nav and CTA labels, main text)
-       ──> scrub (emails and phone numbers removed)
+       ──> scrub (emails and phone numbers removed) ──> cache (scrubbed pages only)
        ──> evidence bundle
        ──> optional: one LLM call ──> source check ──> brief
 ```
 
-`fetcher.py` is the only module that does HTTP. `crawler.py`, `extractor.py` and `scrub.py` hold the logic that needs no network, `synthesize.py` makes the optional call, `briefer.py` ties the stages together and `cli.py` is the command line.
+`fetcher.py` is the only module that does HTTP, and `cache.py` is the only one that writes pages to disk. `crawler.py`, `extractor.py` and `scrub.py` hold the logic that needs no network, `synthesize.py` makes the optional call, `briefer.py` ties the stages together and `cli.py` is the command line.
 
 ## Decision log
 **1. A fixed list of marketing paths, not a crawl.**
@@ -35,25 +35,28 @@ Chosen: the default delay is 1.0 second between requests, with a 10-second timeo
 Rejected: parallel fetching, which would hit a small company's site with a burst.
 Cost: a run is slow on purpose.
 
-**3. Emails and phone numbers are removed before the evidence is built.**
-Chosen: every text field of every page passes through a scrub that replaces emails and phone-like numbers (eight digits or more, with separators) with a redaction marker. The terminal output, the JSON and the model prompt are all built from the scrubbed evidence.
-Rejected: leaving the data in and asking the model to ignore it, and relying on the path list alone to keep it out.
-Known limits: the scrub is pattern-based. Names, street addresses and social profile links are not removed, and a number written out in words is not matched. The on-disk HTML cache holds pages as fetched, before the scrub. It is gitignored, and `--no-cache` skips it.
+**3. Emails and phone numbers are removed before anything is stored or printed.**
+Chosen: every text field of every page passes through a scrub that replaces emails and phone-like numbers (eight digits or more, with separators) with a redaction marker. The terminal output, the JSON, the model prompt and the on-disk cache are all built from the scrubbed pages, and the HTML as fetched is never written anywhere. `--no-cache` skips the cache, which is gitignored.
+Rejected: leaving the data in and asking the model to ignore it, and relying on the path list alone to keep it out. Also rejected: caching the HTML as fetched, which the first release did (commit `8e0a0b5`), and scrubbing the raw markup before caching it, because an email written as an HTML entity survives that and is only caught after the extractor decodes it. A probe run after the repo was public found the cache, and `tests/test_cache.py` reproduces it.
+Known limits: the scrub is pattern-based. Names, street addresses and social profile links are not removed, and a number written out in words is not matched. A `.cache` folder left by an earlier version holds HTML as fetched and is never read again, so delete it.
 
 **4. Works without a key, with one validated model call behind a flag.**
-Chosen: a plain run needs no key and returns the evidence bundle. With `--llm` and `ANTHROPIC_API_KEY` set, it makes exactly one model call. The reply is parsed defensively and validated against a schema that rejects unknown fields. Every source it cites must be a URL that was fetched, and a brief that cites anything else is rejected rather than repaired (status `rejected_unfetched_source`). On any failure the evidence is still returned. The model name is a default in `company_briefer/config.py`.
+Chosen: a plain run needs no key and returns the evidence bundle. With `--llm` and `ANTHROPIC_API_KEY` set, it makes exactly one model call. The reply is parsed defensively and validated against a schema that rejects unknown fields. A brief whose sources are not all fetched URLs is rejected rather than repaired (decision 7). On any failure the evidence is still returned. The model name is a default in `company_briefer/config.py`.
 Rejected: a model call on by default, which would put cost and run-to-run variation into every use, and a multi-step agent loop, which is harder to check than one call.
-Known limits: the source check compares exact URLs. It shows that the cited pages were fetched. It does not show that each claim is on the page, which stays an instruction in the prompt.
 
 **5. If robots.txt cannot be read, the run stops.**
 Chosen: a connection error, a timeout, an HTTP 5xx or other unusable answer, or a redirect to another origin means no page is requested. The command prints the reason, exits with code 3 and writes no result. An HTTP 4xx means the site publishes no robots.txt, and the run continues with a note in the evidence.
 Rejected: the first release's behavior, which treated an unreadable robots.txt as permission and fetched every allowlisted path (commit `8e0a0b5`, where a test pinned that behavior). A probe run after the repo was public found it.
-Known limits: a short outage on the target site stops the run, so run it again later. robots.txt is applied to each path the tool asks for, not to the target of a redirect inside the same origin.
+Known limits: a short outage on the target site stops the run, so run it again later.
 
-**6. Redirects to another origin are not followed.**
-Chosen: a redirect inside the same origin (scheme, host and port) is followed. A redirect to any other origin is never requested. That path is skipped, and the evidence notes the target without its query string.
-Rejected: following every redirect, as the first release did. A page that redirected to another host was fetched without reading that host's robots.txt, and its content was recorded under the original URL. A probe run after the repo was public found it, and `tests/test_redirects.py` reproduces it.
+**6. Redirects are followed only inside the origin, and only where robots.txt allows.**
+Chosen: a redirect inside the same origin (scheme, host and port) is followed one hop at a time, and each target is checked against robots.txt before it is requested. A redirect to any other origin, or into a path robots.txt disallows, is never requested. That path is skipped, and the evidence notes the target without its query string.
+Rejected: following every redirect, as the first release did. A page that redirected to another host was fetched without reading that host's robots.txt, and its content was recorded under the original URL. A redirect inside the origin into a disallowed path was fetched too, because robots.txt was checked for the path the tool asked for and not for where it led. A probe run after the repo was public found both, and `tests/test_redirects.py` reproduces them.
 Known limits: a redirect from `http://example.com` to `https://example.com` counts as another origin, and so does one from a bare domain to its `www` host. Pass the final address.
+
+**7. Sources are one list per brief, and each must be a fetched URL.**
+Chosen: a brief has a single `sources` list for the whole brief. Every URL in it must be one of the URLs fetched in that run. URLs are compared after ignoring one trailing slash and the case of the scheme and the host, and nothing else, and the sources are not rewritten. A brief that fails the check is rejected, not repaired, with status `rejected_unfetched_source`, and the evidence is still returned.
+Deferred: citing a source for each claim. It needs a different output schema and a check for every claim, and it was left for a later version.
 
 ## How AI was used
 Placeholder: the author writes this section. <!-- OWNER: replace this section with your own text before the repo is shared. -->
@@ -73,7 +76,7 @@ That prints the evidence bundle and a notice that synthesis was skipped. It need
 uv run company-briefer brief example.com --json            # the full result as JSON
 uv run company-briefer brief example.com --out brief.json  # also write the JSON to a file
 uv run company-briefer brief example.com --no-cache        # refetch instead of reading .cache
-uv run --extra dev pytest                                  # 93 tests, no network
+uv run --extra dev pytest                                  # 115 tests, no network
 uv run --extra dev ruff check company_briefer tests
 uv run --extra dev mypy company_briefer
 ```
@@ -129,7 +132,7 @@ Defaults live in [`company_briefer/config.py`](company_briefer/config.py) as a v
 | `model` | `claude-opus-4-8` | none |
 | `max_tokens` | 4096 | 256 or more |
 | `max_page_chars` | 6000 per page | 500 or more |
-| `cache_dir` | `.cache/company-briefer` | gitignored |
+| `cache_dir` | `.cache/company-briefer` | scrubbed pages only; gitignored |
 
 The command line uses the defaults. Library code can override them:
 ```python
@@ -145,4 +148,4 @@ print(result.evidence.model_dump_json(indent=2))
 License: MIT, see [LICENSE](LICENSE). The example brief was generated from the synthetic fixture site in `tests/fixtures/site/`, a made-up company with a reserved 555 phone number and an `.example` email domain.
 
 ## Status
-**Status: Complete.** The 93 tests pass, and CI runs ruff, mypy and pytest on Python 3.11, 3.12 and 3.13. Known limits are listed in the decision log.
+**Status: Complete.** The 115 tests pass, and CI runs ruff, mypy and pytest on Python 3.11, 3.12 and 3.13. Known limits are listed in the decision log.
