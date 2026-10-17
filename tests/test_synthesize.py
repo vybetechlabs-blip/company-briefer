@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import anthropic
 import pytest
 
 from company_briefer.config import Config
-from company_briefer.models import Evidence
-from company_briefer.synthesize import build_user_prompt, parse_brief, synthesize
+from company_briefer.models import Evidence, PageContent
+from company_briefer.synthesize import (
+    build_user_prompt,
+    parse_brief,
+    synthesize,
+    unfetched_sources,
+)
 
 VALID_BRIEF: dict[str, Any] = {
     "positioning": "Acme Signals positions itself as revenue intelligence for B2B teams.",
@@ -23,7 +29,17 @@ VALID_BRIEF: dict[str, Any] = {
     "notes": None,
 }
 
-EVIDENCE = Evidence(domain="https://example.com", pages=[], robots_notes=[])
+
+def _page(url: str) -> PageContent:
+    return PageContent(url=url, status=200, fetched_at=datetime(2026, 1, 1, tzinfo=UTC))
+
+
+# The two pages VALID_BRIEF cites as sources.
+EVIDENCE = Evidence(
+    domain="https://example.com",
+    pages=[_page("https://example.com/"), _page("https://example.com/pricing")],
+    robots_notes=[],
+)
 
 
 class FakeBlock:
@@ -123,6 +139,38 @@ class TestSynthesize:
         brief, status = synthesize(EVIDENCE, config)
         assert brief is None
         assert status == "failed"
+
+
+class TestSourcesAreFetchedUrls:
+    """Every source in a brief must be one of the URLs actually fetched."""
+
+    def test_sources_inside_the_evidence_pass(self) -> None:
+        brief = parse_brief(json.dumps(VALID_BRIEF))
+        assert brief is not None
+        assert unfetched_sources(brief, EVIDENCE) == []
+
+    @pytest.mark.parametrize(
+        "bad_source",
+        [
+            "https://example.com/careers",  # same site, never fetched
+            "https://other.example/pricing",  # another site entirely
+            "https://example.com",  # not an exact fetched URL (no trailing slash)
+        ],
+    )
+    def test_brief_citing_an_unfetched_source_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, config: Config, bad_source: str
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+        reply = {**VALID_BRIEF, "sources": [*VALID_BRIEF["sources"], bad_source]}
+        _install_fake_client(monkeypatch, json.dumps(reply))
+        brief, status = synthesize(EVIDENCE, config)
+        assert brief is None
+        assert status == "rejected_unfetched_source"
+
+    def test_reported_unfetched_sources_are_named(self) -> None:
+        brief = parse_brief(json.dumps({**VALID_BRIEF, "sources": ["https://example.com/x"]}))
+        assert brief is not None
+        assert unfetched_sources(brief, EVIDENCE) == ["https://example.com/x"]
 
 
 def test_user_prompt_embeds_evidence_and_grounding_ask() -> None:

@@ -85,8 +85,18 @@ def parse_brief(text: str) -> Brief | None:
         return None
 
 
+def unfetched_sources(brief: Brief, evidence: Evidence) -> list[str]:
+    """Sources in *brief* that are not exactly one of the URLs fetched into *evidence*."""
+    fetched = {page.url for page in evidence.pages}
+    return [source for source in brief.sources if source not in fetched]
+
+
 def synthesize(evidence: Evidence, config: Config) -> tuple[Brief | None, SynthesisStatus]:
-    """Run the single synthesis call. Never raises on model output problems."""
+    """Run the single synthesis call. Never raises on model output problems.
+
+    A brief that cites any source other than a fetched URL is rejected, not
+    repaired: the prompt asks for evidence URLs only, and this enforces it.
+    """
     if not api_key_present():
         return None, "skipped_no_api_key"
     client = anthropic.Anthropic()
@@ -103,4 +113,6 @@ def synthesize(evidence: Evidence, config: Config) -> tuple[Brief | None, Synthe
     brief = parse_brief(text)
     if brief is None:
         return None, "failed"
+    if unfetched_sources(brief, evidence):
+        return None, "rejected_unfetched_source"
     return brief, "ok"

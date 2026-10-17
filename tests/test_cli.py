@@ -94,6 +94,38 @@ def test_full_brief_renders_human_readably(
     assert "Acme Signals positions itself" in result.output
 
 
+def test_brief_citing_unfetched_source_is_rejected_and_evidence_kept(
+    fake_site: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import anthropic
+
+    from tests.test_synthesize import VALID_BRIEF, FakeMessage
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    invented = {**VALID_BRIEF, "sources": ["https://example.com/never-fetched"]}
+
+    class FakeMessages:
+        def create(self, **kwargs: Any) -> FakeMessage:
+            return FakeMessage(json.dumps(invented))
+
+    class FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
+
+    result = runner.invoke(cli.app, ["brief", "example.com", "--llm", "--json"])
+    payload = json.loads(result.stdout)
+    assert result.exit_code == 0
+    assert payload["synthesis_status"] == "rejected_unfetched_source"
+    assert payload["brief"] is None
+    assert len(payload["evidence"]["pages"]) == 3
+
+    human = runner.invoke(cli.app, ["brief", "example.com", "--llm"])
+    assert "synthesis rejected" in human.output
+    assert "positioning:" not in human.output
+
+
 def test_invalid_domain_exits_2() -> None:
     result = runner.invoke(cli.app, ["brief", "not a domain!!"])
     assert result.exit_code == 2

@@ -111,6 +111,11 @@ def _render_human(result: BriefResult) -> None:
             typer.echo(_SKIP_NOTICE)
         elif result.synthesis_status == "failed":
             typer.echo("synthesis failed — the evidence above is still complete")
+        elif result.synthesis_status == "rejected_unfetched_source":
+            typer.echo(
+                "synthesis rejected — the brief cited a source that was not fetched;"
+                " the evidence above is still complete"
+            )
         return
 
     b = result.brief

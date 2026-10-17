@@ -58,6 +58,7 @@ SynthesisStatus = Literal[
     "skipped_not_requested",
     "skipped_no_api_key",
     "failed",
+    "rejected_unfetched_source",
 ]
 
 
