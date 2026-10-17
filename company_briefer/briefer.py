@@ -23,17 +23,19 @@ def build_brief(
     """Run the full pipeline for one domain and return a BriefResult.
 
     The deterministic gather+extract stages always run; the LLM synthesis
-    stage runs only when *llm* is True and an API key is available.
+    stage runs only when *llm* is True and an API key is available. Raises
+    `RobotsUnavailableError` before any page is requested when robots.txt cannot
+    be read.
     """
     config = config or Config()
     origin = normalize_origin(domain)
     fetcher = Fetcher(config, use_cache=use_cache)
 
-    robots_txt = fetcher.fetch_robots(origin)
+    robots_txt = fetcher.fetch_robots(origin)  # raises RobotsUnavailableError: fail-closed
     policy = RobotsPolicy(robots_txt, config.user_agent)
     notes: list[str] = []
     if robots_txt is None:
-        notes.append("robots.txt not reachable; proceeding with allowlisted paths only")
+        notes.append("no robots.txt published (HTTP 4xx); proceeding with allowlisted paths only")
 
     urls, plan_notes = plan_fetch(origin, config.path_allowlist, policy, config.max_pages)
     notes.extend(plan_notes)

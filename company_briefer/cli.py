@@ -11,6 +11,7 @@ import typer
 
 from company_briefer.briefer import build_brief
 from company_briefer.config import Config
+from company_briefer.fetcher import RobotsUnavailableError
 from company_briefer.models import BriefResult
 from company_briefer.synthesize import api_key_present
 
@@ -74,6 +75,12 @@ def brief(
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+    except RobotsUnavailableError as exc:
+        typer.echo(
+            f"error: cannot read robots.txt ({exc}); refusing to fetch any page from this site",
+            err=True,
+        )
+        raise typer.Exit(code=3) from exc
 
     if out is not None:
         out.write_text(result.model_dump_json(indent=2), encoding="utf-8")

@@ -53,16 +53,20 @@ def test_llm_requested_without_key_degrades(
     assert result.evidence.pages  # evidence still emitted
 
 
-def test_unreachable_robots_is_noted_and_pipeline_continues(
+def test_absent_robots_is_noted_and_failed_pages_do_not_stop_the_pipeline(
     monkeypatch: Any, config: Config
 ) -> None:
     import requests
 
-    def refuse_everything(self: Any, url: str, **kw: Any) -> Any:
+    from tests.conftest import FakeResponse
+
+    def no_robots_and_pages_down(self: Any, url: str, **kw: Any) -> Any:
+        if url.endswith("/robots.txt"):
+            return FakeResponse(404, "not found")
         raise requests.ConnectionError("nope")
 
-    monkeypatch.setattr(requests.Session, "get", refuse_everything)
+    monkeypatch.setattr(requests.Session, "get", no_robots_and_pages_down)
     result = build_brief("example.com", config)
-    assert any("robots.txt not reachable" in n for n in result.evidence.robots_notes)
+    assert any("no robots.txt published" in n for n in result.evidence.robots_notes)
     assert result.evidence.pages == []
     assert any("fetch failed" in n for n in result.evidence.robots_notes)

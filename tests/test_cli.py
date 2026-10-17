@@ -101,9 +101,13 @@ def test_invalid_domain_exits_2() -> None:
 
 
 def test_nothing_fetched_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse_everything(self: Any, url: str, **kw: Any) -> Any:
+    from tests.conftest import FakeResponse
+
+    def pages_down(self: Any, url: str, **kw: Any) -> Any:
+        if url.endswith("/robots.txt"):
+            return FakeResponse(404, "not found")  # no robots.txt: crawling is allowed
         raise requests.ConnectionError("nope")
 
-    monkeypatch.setattr(requests.Session, "get", refuse_everything)
+    monkeypatch.setattr(requests.Session, "get", pages_down)
     result = runner.invoke(cli.app, ["brief", "example.com"])
     assert result.exit_code == 1

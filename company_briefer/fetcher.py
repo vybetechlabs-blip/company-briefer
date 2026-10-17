@@ -28,6 +28,10 @@ REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
+class RobotsUnavailableError(Exception):
+    """robots.txt could not be read, so nothing may be fetched from the site."""
+
+
 @dataclass(frozen=True)
 class FetchedPage:
     url: str
@@ -76,14 +80,28 @@ class Fetcher:
         self._last_request_at = 0.0
 
     def fetch_robots(self, origin: str) -> str | None:
-        """Fetch robots.txt for *origin*. None means unreachable or not present."""
+        """Fetch robots.txt for *origin*; None means the site publishes none (HTTP 4xx).
+
+        Fail-closed: if robots.txt cannot be read (connection error, timeout, a 5xx
+        or other unusable answer, or a redirect to another origin) the crawl is
+        refused with `RobotsUnavailableError` instead of assuming permission.
+        """
+        url = f"{origin}/robots.txt"
         try:
-            resp, blocked = self._follow(f"{origin}/robots.txt", self._get)
-        except requests.RequestException:
+            resp, blocked = self._follow(url, self._get)
+        except requests.Timeout as exc:
+            raise RobotsUnavailableError(f"{url} timed out") from exc
+        except requests.RequestException as exc:
+            raise RobotsUnavailableError(f"{url} failed ({exc.__class__.__name__})") from exc
+        if blocked is not None:
+            raise RobotsUnavailableError(
+                f"{url} redirects to another origin ({describe_target(blocked)})"
+            )
+        if resp.status_code == 200:
+            return resp.text
+        if 400 <= resp.status_code < 500:
             return None
-        if blocked is not None or resp.status_code != 200:
-            return None
-        return resp.text
+        raise RobotsUnavailableError(f"{url} returned HTTP {resp.status_code}")
 
     def fetch_page(self, url: str) -> FetchedPage:
         """Fetch one page, serving from the on-disk cache when possible.
