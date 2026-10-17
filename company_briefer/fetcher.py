@@ -35,8 +35,17 @@ class FetchedPage:
     status: int
     html: str
     fetched_at: datetime
-    # Set when the server redirected to another origin; that target was not requested.
+    # Set when a redirect was not followed: the target (never requested) and why.
     redirect_to: str | None = None
+    redirect_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class BlockedRedirect:
+    """A redirect that was not followed: where it pointed and why it was refused."""
+
+    target: str
+    reason: str
 
 
 def _origin(url: str) -> tuple[str, str, int | None] | None:
@@ -88,9 +97,9 @@ class Fetcher:
             raise RobotsUnavailableError(f"{url} timed out") from exc
         except requests.RequestException as exc:
             raise RobotsUnavailableError(f"{url} failed ({exc.__class__.__name__})") from exc
-        if blocked is not None:
+        if blocked is not None:  # robots.txt itself left the origin
             raise RobotsUnavailableError(
-                f"{url} redirects to another origin ({describe_target(blocked)})"
+                f"{url} redirects to {blocked.reason} ({describe_target(blocked.target)})"
             )
         if resp.status_code == 200:
             return resp.text
@@ -98,20 +107,23 @@ class Fetcher:
             return None
         raise RobotsUnavailableError(f"{url} returned HTTP {resp.status_code}")
 
-    def fetch_page(self, url: str) -> FetchedPage:
+    def fetch_page(self, url: str, *, allowed: Callable[[str], bool] | None = None) -> FetchedPage:
         """Fetch one page.
 
-        A redirect within the origin is followed. A redirect to another origin is
-        not requested: the result carries its status and `redirect_to` instead.
+        A redirect within the origin is followed, each hop only if *allowed* (a
+        robots.txt check on the target) says so. A redirect to another origin, or to
+        a target *allowed* refuses, is not requested: the result carries the 3xx
+        status, `redirect_to` and `redirect_reason` instead.
         """
-        resp, blocked = self._follow(url, self._get_with_retry)
+        resp, blocked = self._follow(url, self._get_with_retry, allowed)
         if blocked is not None:
             return FetchedPage(
                 url=url,
                 status=resp.status_code,
                 html="",
                 fetched_at=datetime.now(UTC),
-                redirect_to=describe_target(blocked),
+                redirect_to=describe_target(blocked.target),
+                redirect_reason=blocked.reason,
             )
         # requests defaults text/* without a charset header to ISO-8859-1, which
         # garbles UTF-8 pages; fall back to detection when no charset is declared.
@@ -127,13 +139,17 @@ class Fetcher:
         return self.session.get(url, timeout=self.config.timeout_seconds, allow_redirects=False)
 
     def _follow(
-        self, url: str, get: Callable[[str], requests.Response]
-    ) -> tuple[requests.Response, str | None]:
-        """Follow redirects within the origin of *url*; stop at the first one that leaves it.
+        self,
+        url: str,
+        get: Callable[[str], requests.Response],
+        allowed: Callable[[str], bool] | None = None,
+    ) -> tuple[requests.Response, BlockedRedirect | None]:
+        """Follow redirects within the origin of *url*; stop at the first one not to be followed.
 
-        Returns the final response and, when a redirect led to another origin, that
-        target (never requested). Exceeding the session's redirect limit raises
-        `requests.TooManyRedirects`, as `requests` itself would.
+        A redirect is not followed when its target is in another origin, or when
+        *allowed* (the robots.txt check) refuses the target. Either way the target
+        is never requested and is returned with the reason. Exceeding the session's
+        redirect limit raises `requests.TooManyRedirects`, as `requests` itself would.
         """
         current = url
         for _ in range(self.session.max_redirects + 1):
@@ -145,7 +161,9 @@ class Fetcher:
                 return resp, None
             target = urljoin(current, location)
             if not _same_origin(url, target):
-                return resp, target
+                return resp, BlockedRedirect(target, "another origin")
+            if allowed is not None and not allowed(target):
+                return resp, BlockedRedirect(target, "a path disallowed by robots.txt")
             current = target
         raise requests.TooManyRedirects(f"exceeded {self.session.max_redirects} redirects")
 

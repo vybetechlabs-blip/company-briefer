@@ -170,3 +170,109 @@ def test_a_blocked_redirect_is_never_cached(scripted_hosts: Install, config: Con
     assert len(about_requests) == 2  # asked again on the second run, so not served from cache
     assert len(net.log) > first_run
     assert "b.example" not in net.hosts_contacted()
+
+
+# --- a redirect inside the origin is checked against robots.txt before it is followed ---
+
+PRIVATE = "<html><head><title>Private</title></head><body><h1>Staff only</h1></body></html>"
+ROBOTS = "User-agent: *\nDisallow: /private\n"
+
+
+def site_with_robots(routes: dict[str, tuple[int, dict[str, str], str]]) -> HostHandler:
+    """A site whose robots.txt disallows /private; `routes` adds or overrides paths."""
+
+    def handler(path: str) -> tuple[int, dict[str, str], str]:
+        if path in routes:
+            return routes[path]
+        if path == "/robots.txt":
+            return 200, {}, ROBOTS
+        if path == "/":
+            return 200, {}, HOME
+        if path == "/private" or path.startswith("/private/"):
+            return 200, {}, PRIVATE
+        return 404, {}, "not found"
+
+    return handler
+
+
+def test_same_origin_redirect_into_a_disallowed_path_is_not_followed(
+    scripted_hosts: Install, config: Config
+) -> None:
+    net = scripted_hosts(
+        {"a.example": site_with_robots({"/about": (301, {"Location": "/private"}, "")})}
+    )
+
+    result = build_brief("a.example", config, use_cache=False)
+
+    assert "https://a.example/private" not in net.log  # the target was never requested
+    assert {p.url for p in result.evidence.pages} == {"https://a.example/"}
+    assert "Staff only" not in result.model_dump_json()
+    assert any(
+        "skipped https://a.example/about" in n
+        and "redirects to a path disallowed by robots.txt" in n
+        and "https://a.example/private" in n
+        and "not followed" in n
+        for n in result.evidence.robots_notes
+    )
+
+
+def test_a_later_hop_into_a_disallowed_path_is_not_followed(
+    scripted_hosts: Install, config: Config
+) -> None:
+    net = scripted_hosts(
+        {
+            "a.example": site_with_robots(
+                {
+                    "/about": (301, {"Location": "/team"}, ""),
+                    "/team": (302, {"Location": "https://a.example/private/roster?id=7"}, ""),
+                }
+            )
+        }
+    )
+
+    result = build_brief("a.example", config, use_cache=False)
+
+    assert "https://a.example/team" in net.log  # the allowed first hop was followed
+    assert not any(u.startswith("https://a.example/private") for u in net.log)
+    notes = " ".join(result.evidence.robots_notes)
+    assert "https://a.example/private/roster" in notes
+    assert "id=7" not in notes  # the query string is not reported
+
+
+def test_an_allowed_same_origin_redirect_is_still_followed_with_robots_in_force(
+    scripted_hosts: Install, config: Config
+) -> None:
+    about = "<html><head><title>About us</title></head><body></body></html>"
+    scripted_hosts(
+        {
+            "a.example": site_with_robots(
+                {"/about": (301, {"Location": "/about/"}, ""), "/about/": (200, {}, about)}
+            )
+        }
+    )
+
+    result = build_brief("a.example", config, use_cache=False)
+
+    assert {p.url: p.title for p in result.evidence.pages}["https://a.example/about"] == "About us"
+    assert not any("not followed" in n for n in result.evidence.robots_notes)
+
+
+def test_the_robots_check_is_applied_to_every_target_given_to_the_fetcher(
+    scripted_hosts: Install, config: Config
+) -> None:
+    net = scripted_hosts(
+        {"a.example": site_with_robots({"/about": (301, {"Location": "/private"}, "")})}
+    )
+    fetcher = Fetcher(config)
+
+    blocked = fetcher.fetch_page(
+        "https://a.example/about", allowed=lambda url: "/private" not in url
+    )
+    assert blocked.redirect_to == "https://a.example/private"
+    assert blocked.redirect_reason == "a path disallowed by robots.txt"
+    assert blocked.status == 301 and blocked.html == ""
+    assert "https://a.example/private" not in net.log
+
+    # Without a check the fetcher follows the redirect, as `requests` would.
+    open_fetch = fetcher.fetch_page("https://a.example/about")
+    assert open_fetch.status == 200 and open_fetch.redirect_to is None

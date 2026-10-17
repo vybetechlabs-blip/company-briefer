@@ -49,13 +49,14 @@ def build_brief(
             pages.append(cached)
             continue
         try:
-            fetched = fetcher.fetch_page(url)
+            fetched = fetcher.fetch_page(url, allowed=policy.can_fetch)
         except requests.RequestException as exc:
             notes.append(f"fetch failed for {url}: {exc.__class__.__name__}")
             continue
         if fetched.redirect_to is not None:
             notes.append(
-                f"skipped {url}: redirects to another origin ({fetched.redirect_to}); not followed"
+                f"skipped {url}: redirects to {fetched.redirect_reason}"
+                f" ({fetched.redirect_to}); not followed"
             )
             continue
         if fetched.status != 200:
