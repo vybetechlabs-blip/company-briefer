@@ -3,21 +3,29 @@
 No test in this suite may touch the network. The `_no_real_network` autouse
 fixture makes any unmocked HTTP attempt fail loudly; tests that need HTTP use
 the `fake_site` fixture, which serves the synthetic site under
-tests/fixtures/site/ through a patched `requests.Session.get`.
+tests/fixtures/site/ through a patched `requests.Session.get`, or the
+`scripted_hosts` fixture, which puts an in-memory adapter under the real
+`requests` redirect machinery (no sockets) for tests that need several hosts.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import pytest
 import requests
+from requests.adapters import BaseAdapter
+from requests.structures import CaseInsensitiveDict
 
 from company_briefer.config import Config
 
 FIXTURE_SITE = Path(__file__).parent / "fixtures" / "site"
+
+# Captured at import, before the autouse guard replaces it for each test.
+_REAL_SESSION_REQUEST = requests.Session.request
 
 ROUTES: dict[str, str] = {
     "/robots.txt": "robots.txt",
@@ -62,10 +70,16 @@ def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
 class FakeResponse:
     """Mimics requests.Response decoding: no charset header -> ISO-8859-1 default."""
 
-    def __init__(self, status_code: int, text: str, content_type: str = "text/html") -> None:
+    def __init__(
+        self,
+        status_code: int,
+        text: str,
+        content_type: str = "text/html",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self._body = text.encode("utf-8")
-        self.headers = {"Content-Type": content_type}
+        self.headers = {"Content-Type": content_type, **(headers or {})}
         self.encoding: str | None = "utf-8" if "charset" in content_type else "ISO-8859-1"
 
     @property
@@ -94,6 +108,71 @@ def fake_site(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     monkeypatch.setattr(requests.Session, "get", fake_get)
     return calls
+
+
+# A host handler maps a request path to (status, headers, body).
+HostHandler = Callable[[str], tuple[int, dict[str, str], str]]
+
+
+class ScriptedHosts(BaseAdapter):
+    """In-memory network below the redirect machinery of `requests`.
+
+    Routes each request by host to a handler and logs every URL requested, so a
+    test can assert exactly which hosts were contacted. No sockets are opened.
+    """
+
+    def __init__(self, handlers: dict[str, HostHandler]) -> None:
+        super().__init__()
+        self.handlers = handlers
+        self.log: list[str] = []
+
+    def send(
+        self,
+        request: requests.PreparedRequest,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: Any = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> requests.Response:
+        url = request.url or ""
+        self.log.append(url)
+        parts = urlsplit(url)
+        handler = self.handlers.get(parts.netloc)
+        status, headers, body = handler(parts.path or "/") if handler else (404, {}, "no host")
+        response = requests.Response()
+        response.status_code = status
+        response.headers = CaseInsensitiveDict({"Content-Type": "text/html; charset=utf-8"})
+        response.headers.update(headers)
+        response._content = body.encode("utf-8")
+        response.encoding = "utf-8"
+        response.url = url
+        response.request = request
+        return response
+
+    def close(self) -> None:
+        return None
+
+    def hosts_contacted(self) -> set[str]:
+        return {urlsplit(u).netloc for u in self.log}
+
+
+@pytest.fixture
+def scripted_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[dict[str, HostHandler]], ScriptedHosts]:
+    """Install an in-memory network behind the real `requests` redirect logic."""
+
+    def install(handlers: dict[str, HostHandler]) -> ScriptedHosts:
+        adapter = ScriptedHosts(handlers)
+        monkeypatch.setattr(requests.Session, "request", _REAL_SESSION_REQUEST)
+        monkeypatch.setattr(requests.Session, "get_adapter", lambda self, url: adapter)
+        # Proxy-bypass checks can resolve hostnames; keep the suite free of any lookup.
+        monkeypatch.setattr("requests.utils.should_bypass_proxies", lambda url, no_proxy: True)
+        monkeypatch.setattr("requests.sessions.should_bypass_proxies", lambda url, no_proxy: True)
+        return adapter
+
+    return install
 
 
 @pytest.fixture

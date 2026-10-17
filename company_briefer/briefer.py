@@ -45,6 +45,11 @@ def build_brief(
         except requests.RequestException as exc:
             notes.append(f"fetch failed for {url}: {exc.__class__.__name__}")
             continue
+        if fetched.redirect_to is not None:
+            notes.append(
+                f"skipped {url}: redirects to another origin ({fetched.redirect_to}); not followed"
+            )
+            continue
         if fetched.status != 200:
             notes.append(f"skipped {url}: HTTP {fetched.status}")
             continue
