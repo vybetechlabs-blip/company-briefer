@@ -150,11 +150,40 @@ class TestSourcesAreFetchedUrls:
         assert unfetched_sources(brief, EVIDENCE) == []
 
     @pytest.mark.parametrize(
+        "spelling",
+        [
+            "https://example.com",  # root without its trailing slash
+            "https://example.com/pricing/",  # trailing slash added
+            "https://Example.COM/pricing",  # mixed-case host
+            "HTTPS://example.com/",  # upper-case scheme
+            "HTTPS://EXAMPLE.com/pricing/",  # all three together
+        ],
+    )
+    def test_trailing_slash_and_scheme_or_host_case_are_ignored(
+        self, monkeypatch: pytest.MonkeyPatch, config: Config, spelling: str
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+        reply = {**VALID_BRIEF, "sources": [spelling]}
+        _install_fake_client(monkeypatch, json.dumps(reply))
+        brief, status = synthesize(EVIDENCE, config)
+        assert status == "ok"
+        assert brief is not None
+        assert brief.sources == [spelling]  # compared after normalizing, not rewritten
+
+    @pytest.mark.parametrize(
         "bad_source",
         [
             "https://example.com/careers",  # same site, never fetched
             "https://other.example/pricing",  # another site entirely
-            "https://example.com",  # not an exact fetched URL (no trailing slash)
+            "http://example.com/",  # another scheme
+            "https://example.com:8443/",  # another port
+            "https://example.com/Pricing",  # path case still matters
+            "https://example.com/pricing?plan=pro",  # a query string
+            "https://example.com/pricing#top",  # a fragment
+            "https://example.com/pricing//",  # more than one trailing slash
+            "example.com/pricing",  # no scheme
+            "https://example.com./pricing",  # a trailing dot on the host
+            "http://[::1",  # not parseable at all
         ],
     )
     def test_brief_citing_an_unfetched_source_is_rejected(

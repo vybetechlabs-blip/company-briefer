@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 import anthropic
 from pydantic import ValidationError
@@ -85,17 +86,38 @@ def parse_brief(text: str) -> Brief | None:
         return None
 
 
+def _normalize_url(url: str) -> str:
+    """Make two spellings of one URL compare equal, and nothing more.
+
+    Three differences are ignored: one trailing slash on the path, and the case of
+    the scheme and of the host. Path case, query, fragment, scheme and port still
+    have to match.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    path = parts.path.removesuffix("/")
+    return urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), path, parts.query, parts.fragment)
+    )
+
+
 def unfetched_sources(brief: Brief, evidence: Evidence) -> list[str]:
-    """Sources in *brief* that are not exactly one of the URLs fetched into *evidence*."""
-    fetched = {page.url for page in evidence.pages}
-    return [source for source in brief.sources if source not in fetched]
+    """Sources in *brief* that are not one of the URLs fetched into *evidence*.
+
+    URLs are compared after `_normalize_url`; the sources themselves are not rewritten.
+    """
+    fetched = {_normalize_url(page.url) for page in evidence.pages}
+    return [source for source in brief.sources if _normalize_url(source) not in fetched]
 
 
 def synthesize(evidence: Evidence, config: Config) -> tuple[Brief | None, SynthesisStatus]:
     """Run the single synthesis call. Never raises on model output problems.
 
-    A brief that cites any source other than a fetched URL is rejected, not
-    repaired: the prompt asks for evidence URLs only, and this enforces it.
+    A brief that cites any source other than a fetched URL (a trailing slash and
+    the case of scheme and host aside) is rejected, not repaired: the prompt asks
+    for evidence URLs only, and this enforces it.
     """
     if not api_key_present():
         return None, "skipped_no_api_key"
