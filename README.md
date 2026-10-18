@@ -11,7 +11,6 @@ The result is an evidence bundle that needs no API key, plus an optional brief f
 
 ### How it works
 A run goes through these stages in order, and several of them can stop it.
-
 ```
 domain ──> robots.txt (unreadable: stop, exit code 3)
        ──> bounded fetch (at most 8 allowlisted paths, one second apart)
@@ -21,7 +20,6 @@ domain ──> robots.txt (unreadable: stop, exit code 3)
        ──> evidence bundle
        ──> optional: one LLM call ──> source check ──> brief
 ```
-
 `fetcher.py` is the only module that does HTTP, and `cache.py` is the only one that writes pages to disk. `crawler.py`, `extractor.py` and `scrub.py` hold the logic that needs no network, `synthesize.py` makes the optional call, `briefer.py` ties the stages together and `cli.py` is the command line.
 
 ## Decision log
@@ -96,7 +94,6 @@ Exit codes: `0` success, `1` no pages could be fetched, `2` invalid domain input
 
 ### Output schema
 The top-level result, `BriefResult`, has the four fields below, and it is what `--json` prints.
-
 | field | type | notes |
 |---|---|---|
 | `domain` | str | normalized origin, for example `https://example.com` |
@@ -142,7 +139,6 @@ from company_briefer.config import Config
 result = build_brief("example.com", Config(max_pages=4, rate_limit_seconds=2.0), llm=False)
 print(result.evidence.model_dump_json(indent=2))
 ```
-
 `build_brief` raises `company_briefer.fetcher.RobotsUnavailableError` when robots.txt cannot be read, before any page is requested.
 
 License: MIT, see [LICENSE](LICENSE). The example brief was generated from the synthetic fixture site in `tests/fixtures/site/`, a made-up company with a reserved 555 phone number and an `.example` email domain.
